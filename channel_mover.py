@@ -122,8 +122,21 @@ header = lines.pop(0)
 parsed_lines = [parse_cfgline(line) for line in lines]
 for line in lines:
     if line.startswith("/config/chlink"):
-        channel_links = [x == "ON" for x in line.split(" ")[1:]]
-        assert len(channel_links) == 16
+        link_states = [x == "ON" for x in line.split(" ")[1:]]
+        assert len(link_states) == 16
+        # Convert boolean links to the new tuple format
+        # Each channel link is represented as either:
+        # - None: channel is not linked
+        # - (other_channel_number, 'L'|'R'): channel is linked to other_channel_number,
+        #   where 'L' means this is the left channel, 'R' means this is the right channel
+        # Each pair represents channels (2i, 2i+1) where i is the link index
+        channel_links: List[Optional[Tuple[int, str]]] = [None] * 32
+        for i, is_linked in enumerate(link_states):
+            if is_linked:
+                left_ch = i * 2
+                right_ch = i * 2 + 1
+                channel_links[left_ch] = (right_ch, 'L')
+                channel_links[right_ch] = (left_ch, 'R')
     if match := channel_pattern.match(line):
         channel_number = match.group(1)
         channel_name = match.group(2)
@@ -170,8 +183,13 @@ for i in range(32):
         if x is None:
             return ''
         else:
-            is_linked = (x % 2 == 0) and channel_links[x // 2]
-            return channel_names[f"ch{x+1:02d}"] + f" ({x+1})" + (" (linked)" if is_linked else "")
+            link_info = channel_links[x]
+            is_linked = link_info is not None
+            link_text = ""
+            if is_linked:
+                other_ch, side = link_info
+                link_text = f" (linked {side} with Ch {other_ch + 1})"
+            return channel_names[f"ch{x+1:02d}"] + f" ({x+1})" + link_text
 
     st.selectbox(
         f"Channel {num}", options,
@@ -180,24 +198,75 @@ for i in range(32):
         on_change=handle_change,
         kwargs=dict(key=key, prev_old=already_mapped_old_channel_num, prev_new=i))
 
-new_channel_links = []
+# Map old channel links to new channel positions
+# Each new channel inherits the link information from its corresponding old channel
+new_channel_links: List[Optional[Tuple[int, str]]] = [None] * 32
+for i in range(32):
+    old_channel_idx = channel_crossbar.new_to_old[i]
+    if old_channel_idx is not None:
+        old_link = channel_links[old_channel_idx]
+        if old_link is not None:
+            # This old channel was linked, find where its partner maps to
+            old_partner_ch, side = old_link
+            new_partner_ch = channel_crossbar.old_to_new[old_partner_ch]
+            if new_partner_ch is not None:
+                new_channel_links[i] = (new_partner_ch, side)
+            else:
+                st.warning(f"Channel {old_channel_idx + 1} was linked to channel {old_partner_ch + 1}, but the partner is not mapped")
+
+# Convert back to boolean format for the link pairs for file output
+link_states = [False] * 16
 for i in range(16):
-    new_channel_idx = i * 2
-    old_channel_idx = channel_crossbar.new_to_old[new_channel_idx]
-    if old_channel_idx is None:
-        is_linked = False
-    else:
-        # New channel 2i should be linked if old channel was linked
-        is_linked = channel_links[old_channel_idx // 2]
-        if is_linked and old_channel_idx % 2 == 1:
-            st.warning(f"Link mismatch {old_channel_idx} -> {new_channel_idx}")
-    new_channel_links.append(is_linked)
+    left_ch = i * 2
+    right_ch = i * 2 + 1
+    left_link = new_channel_links[left_ch]
+    right_link = new_channel_links[right_ch]
+    
+    # Check if these channels are linked to each other
+    if (left_link is not None and left_link[0] == right_ch and left_link[1] == 'L' and
+        right_link is not None and right_link[0] == left_ch and right_link[1] == 'R'):
+        link_states[i] = True
+    elif left_link is not None or right_link is not None:
+        # One is linked but not to the expected partner
+        if left_link:
+            partner_ch, side = left_link
+            # Get the old channel names that map to these new positions
+            left_old_ch = channel_crossbar.new_to_old[left_ch]
+            partner_old_ch = channel_crossbar.new_to_old[partner_ch]
+            right_old_ch = channel_crossbar.new_to_old[right_ch]
+            
+            left_name = channel_names[f"ch{left_old_ch + 1:02d}"] if left_old_ch is not None else f"Ch {left_ch + 1}"
+            partner_name = channel_names[f"ch{partner_old_ch + 1:02d}"] if partner_old_ch is not None else f"Ch {partner_ch + 1}"
+            right_name = channel_names[f"ch{right_old_ch + 1:02d}"] if right_old_ch is not None else f"Ch {right_ch + 1}"
+            
+            st.warning(f"Link mismatch: {left_name} (New Ch {left_ch + 1}, Left) is linked to {partner_name} (New Ch {partner_ch + 1}) but should be linked to {right_name} (New Ch {right_ch + 1}, Right)")
+        if right_link:
+            partner_ch, side = right_link
+            # Get the old channel names that map to these new positions
+            right_old_ch = channel_crossbar.new_to_old[right_ch]
+            partner_old_ch = channel_crossbar.new_to_old[partner_ch]
+            left_old_ch = channel_crossbar.new_to_old[left_ch]
+            
+            right_name = channel_names[f"ch{right_old_ch + 1:02d}"] if right_old_ch is not None else f"Ch {right_ch + 1}"
+            partner_name = channel_names[f"ch{partner_old_ch + 1:02d}"] if partner_old_ch is not None else f"Ch {partner_ch + 1}"
+            left_name = channel_names[f"ch{left_old_ch + 1:02d}"] if left_old_ch is not None else f"Ch {left_ch + 1}"
+            
+            st.warning(f"Link mismatch: {right_name} (New Ch {right_ch + 1}, Right) is linked to {partner_name} (New Ch {partner_ch + 1}) but should be linked to {left_name} (New Ch {left_ch + 1}, Left)")
 
-# TODO: verify that linked channels are still matched identically
-# (this should also ensure that a linked channel hasn't ended up at an even index)
+# Check if links have changed by comparing original and new link states
+original_link_states = [False] * 16
+for i in range(16):
+    left_ch = i * 2
+    right_ch = i * 2 + 1
+    left_link = channel_links[left_ch]
+    right_link = channel_links[right_ch]
+    
+    if (left_link is not None and left_link[0] == right_ch and left_link[1] == 'L' and
+        right_link is not None and right_link[0] == left_ch and right_link[1] == 'R'):
+        original_link_states[i] = True
 
-if channel_links != new_channel_links:
-    st.write("New channel links:", new_channel_links)
+if link_states != original_link_states:
+    st.write("New channel links:", ["ON" if x else "OFF" for x in link_states])
 else:
     st.write("Channel links unchanged")
 
@@ -217,7 +286,7 @@ for setting in parsed_lines:
     if setting.path.startswith("/config/chlink"):
         setting = ConfigLine(
             path=setting.path,
-            value=" ".join(["ON" if x else "OFF" for x in new_channel_links]))
+            value=" ".join(["ON" if x else "OFF" for x in link_states]))
     elif setting.match_context("/ch"):
         old_channel_num = int(setting.path_parts[1]) - 1
         new_channel_number = channel_crossbar.old_to_new[old_channel_num]
