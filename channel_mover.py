@@ -12,7 +12,6 @@ class Crossbar:
     Example:
     
     >>> cb = Crossbar(n=4)
-    >>> cb.clear_all_mappings()
     >>> cb.connect(0, 1)
     >>> cb.connect(2, 3)
     >>> cb.get_unmapped_olds()
@@ -37,7 +36,6 @@ class Crossbar:
     def __init__(self, n: int) -> None:
         self.old_to_new: List[Optional[int]] = [None] * n
         self.new_to_old: List[Optional[int]] = [None] * n
-        self.initialize_noop()
 
     def connect(self, old: int, new: int) -> None:
         self.old_to_new[old] = new
@@ -634,11 +632,13 @@ def main():
     # Initialize or reset channel crossbar
     if st.session_state.get('channel_crossbar') is None:
         st.session_state.channel_crossbar = Crossbar(n=32)
+        st.session_state.channel_crossbar.initialize_noop()
     channel_crossbar = st.session_state.channel_crossbar
     
     # Initialize or reset bus crossbar
     if st.session_state.get('bus_crossbar') is None:
         st.session_state.bus_crossbar = Crossbar(n=16)
+        st.session_state.bus_crossbar.initialize_noop()
     bus_crossbar = st.session_state.bus_crossbar
 
     # Load crossbar from JSON
