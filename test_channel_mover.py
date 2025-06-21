@@ -1,3 +1,4 @@
+import pytest
 from channel_mover import (
     Crossbar, ConfigLine, ChannelLink, SceneParser, 
     ChannelMapper, SceneGenerator, parse_cfgline
@@ -151,33 +152,4 @@ class TestSceneGenerator:
         assert "/ch/02/config \"Test\" 1 RD 1" in lines
 
 
-if __name__ == "__main__":
-    # Run the tests
-    import sys
-    
-    test_classes = [TestCrossbar, TestConfigLine, TestChannelLink, TestSceneParser, TestChannelMapper, TestSceneGenerator]
-    
-    total_tests = 0
-    passed_tests = 0
-    
-    for test_class in test_classes:
-        print(f"\nTesting {test_class.__name__}:")
-        test_instance = test_class()
-        
-        for method_name in dir(test_instance):
-            if method_name.startswith('test_'):
-                total_tests += 1
-                try:
-                    getattr(test_instance, method_name)()
-                    print(f"  ✓ {method_name}")
-                    passed_tests += 1
-                except Exception as e:
-                    print(f"  ✗ {method_name}: {e}")
-    
-    print(f"\n{passed_tests}/{total_tests} tests passed")
-    if passed_tests == total_tests:
-        print("All tests passed! ✓")
-        sys.exit(0)
-    else:
-        print("Some tests failed! ✗")
-        sys.exit(1)
+# Run with: pytest test_channel_mover.py
