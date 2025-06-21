@@ -2,6 +2,7 @@ import streamlit as st
 import re
 import json
 from collections import namedtuple
+from typing import List, Optional, Tuple
 
 scene_file = st.file_uploader("Scene file", type="scn")
 if not scene_file:
@@ -34,34 +35,34 @@ class Crossbar:
     [(2, 3)]
     """
 
-    def __init__(self, n):
-        self.old_to_new = [None] * n
-        self.new_to_old = [None] * n
+    def __init__(self, n: int) -> None:
+        self.old_to_new: List[Optional[int]] = [None] * n
+        self.new_to_old: List[Optional[int]] = [None] * n
 
-    def connect(self, old, new):
+    def connect(self, old: int, new: int) -> None:
         self.old_to_new[old] = new
         self.new_to_old[new] = old
 
-    def disconnect(self, old, new):
+    def disconnect(self, old: int, new: int) -> None:
         self.old_to_new[old] = None
         self.new_to_old[new] = None
 
-    def get_mappings(self):
+    def get_mappings(self) -> List[Tuple[int, int]]:
         return [(i, v) for i, v in enumerate(self.old_to_new) if v is not None]
     
-    def get_unmapped_olds(self):
+    def get_unmapped_olds(self) -> List[int]:
         return [i for i, v in enumerate(self.old_to_new) if v is None]
     
-    def get_unmapped_news(self):
+    def get_unmapped_news(self) -> List[int]:
         return [i for i, v in enumerate(self.new_to_old) if v is None]
     
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Crossbar(old_to_new={self.old_to_new}, new_to_old={self.new_to_old})"
     
-    def __repr__(self):
+    def __repr__(self) -> str:
         return str(self)
     
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.old_to_new)
 
 # run those doctests
@@ -70,14 +71,14 @@ doctest.testmod()
 
 
 class ConfigLine(namedtuple("ConfigLine", 'path value')):
-    def match_context(self, path):
+    def match_context(self, path: str) -> bool:
         return self.path.startswith(path)
     
-    def match_setting(self, path):
+    def match_setting(self, path: str) -> bool:
         return self.path.endswith(path)
     
     @property
-    def path_parts(self):
+    def path_parts(self) -> List[str]:
         return self.path.split("/")[1:]
     
     def __str__(self) -> str:
@@ -90,7 +91,7 @@ class ConfigLine(namedtuple("ConfigLine", 'path value')):
         return ConfigLine("/".join([preamble] + path_parts), self.value)
 
 
-def parse_cfgline(line):
+def parse_cfgline(line: str) -> ConfigLine:
     """Parse config lines into parts and values.
     Example:
     
@@ -146,7 +147,7 @@ if load_crossbar:
 
 st.header("New Channels")
 
-def handle_change(key, prev_old, prev_new):
+def handle_change(key: str, prev_old: Optional[int], prev_new: int) -> None:
     cur_old_channel = st.session_state[key]
     if prev_old is not None:
         channel_crossbar.disconnect(old=prev_old, new=prev_new)
@@ -165,7 +166,7 @@ for i in range(32):
     options = [None] + options
     index = options.index(already_mapped_old_channel_num)
     
-    def format_func(x):
+    def format_func(x: Optional[int]) -> str:
         if x is None:
             return ''
         else:
