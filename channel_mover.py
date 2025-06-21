@@ -735,90 +735,194 @@ def main():
 
 def _render_channel_mapping_ui(scene_parser: SceneParser, channel_crossbar: Crossbar):
     """Render the UI for mapping channels."""
-    def handle_change(key: str, prev_old: Optional[int], prev_new: int) -> None:
-        cur_old_channel = st.session_state.get(key, None)
-        if cur_old_channel is None:
-            print(f"Warning: {key} is None, skipping change")
-            return
-        if prev_old is not None:
-            channel_crossbar.disconnect(old=prev_old, new=prev_new)
-        if cur_old_channel is not None:
-            channel_crossbar.connect(old=cur_old_channel, new=prev_new)
-
-    for i in range(32):
-        num = str(i+1).zfill(2)
-        key = f"ch{num}"
-        st.session_state.pop(key, None)  # Reset state for this key
-
-        available_channels = channel_crossbar.get_unmapped_olds()
-        already_mapped_old_channel_num = channel_crossbar.new_to_old[i]
-        options = available_channels
-        if already_mapped_old_channel_num is not None:
-            options = [already_mapped_old_channel_num] + options
-        options = [None] + options
-        index = options.index(already_mapped_old_channel_num)
+    
+    # Handle edit mode state
+    if 'editing_channel' not in st.session_state:
+        st.session_state.editing_channel = None
+    
+    # Handle channel selection
+    if st.session_state.get('selected_old_channel') is not None:
+        selected_old = st.session_state.selected_old_channel
+        editing_new = st.session_state.editing_channel
         
-        def format_func(x: Optional[int]) -> str:
-            if x is None:
-                return ''
-            else:
-                link_info = scene_parser.get_channel_link_info(x)
+        if editing_new is not None:
+            # Clear old mapping if exists
+            old_mapping = channel_crossbar.new_to_old[editing_new]
+            if old_mapping is not None:
+                channel_crossbar.disconnect(old=old_mapping, new=editing_new)
+            
+            # Set new mapping
+            channel_crossbar.connect(old=selected_old, new=editing_new)
+        
+        # Clear edit state
+        st.session_state.editing_channel = None
+        st.session_state.selected_old_channel = None
+        st.rerun()
+    
+    # Two column layout
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("New Channels")
+        for i in range(32):
+            new_num = i + 1
+            mapped_old = channel_crossbar.new_to_old[i]
+            
+            # Show current mapping
+            if mapped_old is not None:
+                old_name = scene_parser.channel_names[f"ch{mapped_old+1:02d}"]
+                link_info = scene_parser.get_channel_link_info(mapped_old)
                 link_text = ""
                 if link_info:
                     other_ch, side = link_info
                     link_text = f" (linked {side} with Ch {other_ch + 1})"
-                return scene_parser.channel_names[f"ch{x+1:02d}"] + f" ({x+1})" + link_text
-
-        st.selectbox(
-            f"Channel {num}", options,
-            key=key, index=index,
-            format_func=format_func,
-            on_change=handle_change,
-            kwargs=dict(key=key, prev_old=already_mapped_old_channel_num, prev_new=i))
+                display_text = f"**Ch {new_num:02d}**: {old_name} (was Ch {mapped_old+1}){link_text}"
+            else:
+                display_text = f"**Ch {new_num:02d}**: *unmapped*"
+            
+            # Create columns for text and button
+            text_col, btn_col = st.columns([3, 1])
+            with text_col:
+                st.write(display_text)
+            with btn_col:
+                if st.button("Edit", key=f"edit_ch_{i}"):
+                    st.session_state.editing_channel = i
+                    st.rerun()
+    
+    with col2:
+        if st.session_state.editing_channel is not None:
+            editing_new = st.session_state.editing_channel
+            st.subheader(f"Select source for Channel {editing_new + 1:02d}")
+            
+            # Get available old channels
+            available_olds = channel_crossbar.get_unmapped_olds()
+            current_old = channel_crossbar.new_to_old[editing_new]
+            if current_old is not None:
+                available_olds = [current_old] + available_olds
+            
+            # Add clear option
+            if st.button("Clear mapping", key="clear_mapping"):
+                if current_old is not None:
+                    channel_crossbar.disconnect(old=current_old, new=editing_new)
+                st.session_state.editing_channel = None
+                st.rerun()
+            
+            st.write("Available channels:")
+            for old_ch in available_olds:
+                old_name = scene_parser.channel_names[f"ch{old_ch+1:02d}"]
+                link_info = scene_parser.get_channel_link_info(old_ch)
+                link_text = ""
+                if link_info:
+                    other_ch, side = link_info
+                    link_text = f" (linked {side} with Ch {other_ch + 1})"
+                
+                button_text = f"Ch {old_ch+1:02d}: {old_name}{link_text}"
+                if st.button(button_text, key=f"select_old_{old_ch}"):
+                    st.session_state.selected_old_channel = old_ch
+                    st.rerun()
+            
+            if st.button("Cancel", key="cancel_edit"):
+                st.session_state.editing_channel = None
+                st.rerun()
+        else:
+            st.subheader("Channel Mapping")
+            st.write("Click 'Edit' next to a channel to change its mapping.")
 
 
 def _render_bus_mapping_ui(scene_parser: SceneParser, bus_crossbar: Crossbar):
     """Render the UI for mapping buses."""
-    def handle_change(key: str, prev_old: Optional[int], prev_new: int) -> None:
-        cur_old_bus = st.session_state.get(key, None)
-        if cur_old_bus is None:
-            print(f"Warning: {key} is None, skipping change")
-            return
-        if prev_old is not None:
-            bus_crossbar.disconnect(old=prev_old, new=prev_new)
-        if cur_old_bus is not None:
-            bus_crossbar.connect(old=cur_old_bus, new=prev_new)
-
-    for i in range(16):
-        num = str(i+1).zfill(2)
-        key = f"bus{num}"
-        st.session_state.pop(key, None)  # Reset state for this key
-
-        available_buses = bus_crossbar.get_unmapped_olds()
-        already_mapped_old_bus_num = bus_crossbar.new_to_old[i]
-        options = available_buses
-        if already_mapped_old_bus_num is not None:
-            options = [already_mapped_old_bus_num] + options
-        options = [None] + options
-        index = options.index(already_mapped_old_bus_num)
+    
+    # Handle edit mode state
+    if 'editing_bus' not in st.session_state:
+        st.session_state.editing_bus = None
+    
+    # Handle bus selection
+    if st.session_state.get('selected_old_bus') is not None:
+        selected_old = st.session_state.selected_old_bus
+        editing_new = st.session_state.editing_bus
         
-        def format_func(x: Optional[int]) -> str:
-            if x is None:
-                return ''
-            else:
-                link_info = scene_parser.get_bus_link_info(x)
+        if editing_new is not None:
+            # Clear old mapping if exists
+            old_mapping = bus_crossbar.new_to_old[editing_new]
+            if old_mapping is not None:
+                bus_crossbar.disconnect(old=old_mapping, new=editing_new)
+            
+            # Set new mapping
+            bus_crossbar.connect(old=selected_old, new=editing_new)
+        
+        # Clear edit state
+        st.session_state.editing_bus = None
+        st.session_state.selected_old_bus = None
+        st.rerun()
+    
+    # Two column layout
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("New Buses")
+        for i in range(16):
+            new_num = i + 1
+            mapped_old = bus_crossbar.new_to_old[i]
+            
+            # Show current mapping
+            if mapped_old is not None:
+                old_name = scene_parser.bus_names[f"bus{mapped_old+1:02d}"]
+                link_info = scene_parser.get_bus_link_info(mapped_old)
                 link_text = ""
                 if link_info:
                     other_bus, side = link_info
                     link_text = f" (linked {side} with Bus {other_bus + 1})"
-                return scene_parser.bus_names[f"bus{x+1:02d}"] + f" ({x+1})" + link_text
-
-        st.selectbox(
-            f"Bus {num}", options,
-            key=key, index=index,
-            format_func=format_func,
-            on_change=handle_change,
-            kwargs=dict(key=key, prev_old=already_mapped_old_bus_num, prev_new=i))
+                display_text = f"**Bus {new_num:02d}**: {old_name} (was Bus {mapped_old+1}){link_text}"
+            else:
+                display_text = f"**Bus {new_num:02d}**: *unmapped*"
+            
+            # Create columns for text and button
+            text_col, btn_col = st.columns([3, 1])
+            with text_col:
+                st.write(display_text)
+            with btn_col:
+                if st.button("Edit", key=f"edit_bus_{i}"):
+                    st.session_state.editing_bus = i
+                    st.rerun()
+    
+    with col2:
+        if st.session_state.editing_bus is not None:
+            editing_new = st.session_state.editing_bus
+            st.subheader(f"Select source for Bus {editing_new + 1:02d}")
+            
+            # Get available old buses
+            available_olds = bus_crossbar.get_unmapped_olds()
+            current_old = bus_crossbar.new_to_old[editing_new]
+            if current_old is not None:
+                available_olds = [current_old] + available_olds
+            
+            # Add clear option
+            if st.button("Clear mapping", key="clear_bus_mapping"):
+                if current_old is not None:
+                    bus_crossbar.disconnect(old=current_old, new=editing_new)
+                st.session_state.editing_bus = None
+                st.rerun()
+            
+            st.write("Available buses:")
+            for old_bus in available_olds:
+                old_name = scene_parser.bus_names[f"bus{old_bus+1:02d}"]
+                link_info = scene_parser.get_bus_link_info(old_bus)
+                link_text = ""
+                if link_info:
+                    other_bus, side = link_info
+                    link_text = f" (linked {side} with Bus {other_bus + 1})"
+                
+                button_text = f"Bus {old_bus+1:02d}: {old_name}{link_text}"
+                if st.button(button_text, key=f"select_old_bus_{old_bus}"):
+                    st.session_state.selected_old_bus = old_bus
+                    st.rerun()
+            
+            if st.button("Cancel", key="cancel_bus_edit"):
+                st.session_state.editing_bus = None
+                st.rerun()
+        else:
+            st.subheader("Bus Mapping")
+            st.write("Click 'Edit' next to a bus to change its mapping.")
 
 
 def _get_original_bus_link_states(bus_links: List[ChannelLink]) -> List[bool]:
