@@ -516,3 +516,42 @@ class TestBusRemapIntegration:
         new_val = get_fxrtn_mix_line(new_parser, 0, new_bus)
         if old_val is not None and new_val is not None:
             assert old_val == new_val, f"FXRtn 1 send to bus {old_bus+1} should be preserved at bus {new_bus+1}: old='{old_val}', new='{new_val}'"
+
+
+class TestCrossbarRoundtrip:
+    def test_roundtrip_identity_for_stereo_pair_swaps(self):
+        # load example scene
+        with open(EXAMPLE_SCN_PATH) as f:
+            original = f.read()
+        # parse original
+        parser = SceneParser()
+        parser.parse_scene_file(original)
+        # build a valid stereo-pair swap crossbar
+        cb = Crossbar(32)
+        for i in range(0, 32, 4):
+            cb.connect(i+0, i+2)
+            cb.connect(i+1, i+3)
+            cb.connect(i+2, i+0)
+            cb.connect(i+3, i+1)
+        # identity bus mapping
+        bus_cb = Crossbar(16)
+        bus_cb.initialize_noop()
+        # map and generate
+        mapper = ChannelMapper(parser, cb, bus_cb)
+        gen = SceneGenerator(parser, mapper)
+        mapped = gen.generate_new_scene()
+        # build inverse crossbar
+        inv = Crossbar(32)
+        for old, new in cb.get_mappings():
+            inv.connect(new, old)
+        # parse swapped scene
+        parser2 = SceneParser()
+        parser2.parse_scene_file(mapped)
+        inv_mapper = ChannelMapper(parser2, inv, bus_cb)
+        inv_gen = SceneGenerator(parser2, inv_mapper)
+        roundtrip = inv_gen.generate_new_scene()
+        # full round-trip should equal original - but ignore whitespace differences
+        import re
+        original = re.sub(r'\s+', ' ', original.strip())
+        roundtrip = re.sub(r'\s+', ' ', roundtrip.strip())
+        assert roundtrip == original
