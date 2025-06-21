@@ -13,11 +13,10 @@ A Streamlit application for reordering channels in Behringer X32 scene files wit
 
 ## Usage
 
-1. Install dependencies: `uv install`
-2. Run the application: `uv run streamlit run channel_mover.py`
-3. Upload your X32 scene file
-4. Use the dropdown menus to map old channels to new positions
-5. Download the modified scene file
+- Run the application: `uv run streamlit run channel_mover.py`
+- Upload your X32 scene file
+- Use the dropdown menus to map old channels to new positions
+- Download the modified scene file
 
 ## Architecture
 
@@ -35,12 +34,13 @@ See `ARCHITECTURE.md` for detailed documentation.
 
 Run tests with:
 ```bash
-uv run test_channel_mover.py
+uv run pytest 
 ```
 
 ## Future Features
 
 The modular architecture makes it easy to add:
+
 - Bus reordering
 - Matrix output remapping  
 - Effect send/return reordering
