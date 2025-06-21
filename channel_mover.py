@@ -498,80 +498,116 @@ class SceneGenerator:
         )
     
     def generate_new_scene(self) -> str:
-        """Generate a new scene file with remapped channels and buses."""
+        """Generate a new scene file with remapped channels and buses, including channel sends to buses."""
         new_links = self.channel_mapper.get_new_channel_links()
         link_states = self.channel_mapper.get_link_states_for_export(new_links)
-        
         new_bus_links = self.channel_mapper.get_new_bus_links()
         bus_link_states = self.channel_mapper.get_bus_link_states_for_export(new_bus_links)
         
         new_scene = [self.scene_parser.header]
         already_warned = set()
         
+        # For tap point and panFollow checking
+        tap_points = {}  # (ch, bus) -> value
+        pan_follows = {}  # (ch, bus) -> value
+        
+        # For collecting all remapped mix settings for tap/panFollow assertion
+        mix_type_settings = {}  # (ch, bus) -> value
+        pan_follow_settings = {}  # (ch, bus) -> value
+        
         for setting in self.scene_parser.config_lines:
+            # Remap channel links
             if setting.path.startswith("/config/chlink"):
-                # Update channel links
                 setting = ConfigLine(
                     path=setting.path,
                     value=" ".join(["ON" if x else "OFF" for x in link_states])
                 )
+            # Remap bus links
             elif setting.path.startswith("/config/buslink"):
-                # Update bus links
                 setting = ConfigLine(
                     path=setting.path,
                     value=" ".join(["ON" if x else "OFF" for x in bus_link_states])
                 )
+            # Remap channel sends to buses: /ch/XX/mix/YY/...
+            elif setting.path.startswith("/ch/") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
+                old_ch = int(setting.path_parts[1]) - 1
+                old_bus = int(setting.path_parts[3]) - 1
+                new_ch = self.channel_mapper.crossbar.old_to_new[old_ch]
+                new_bus = self.channel_mapper.bus_crossbar.old_to_new[old_bus]
+                if new_ch is None or new_bus is None:
+                    continue  # skip unmapped
+                # Remap both channel and bus in path
+                new_path_parts = setting.path_parts.copy()
+                new_path_parts[1] = str(new_ch + 1).zfill(2)
+                new_path_parts[3] = str(new_bus + 1).zfill(2)
+                new_path = "/" + "/".join(["ch"] + new_path_parts[1:])
+                setting = ConfigLine(new_path, setting.value)
+                # Collect for tap point and panFollow assertion
+                if new_path.endswith("/type"):
+                    mix_type_settings[(new_ch, new_bus)] = setting.value.strip()
+                if new_path.endswith("/panFollow"):
+                    pan_follow_settings[(new_ch, new_bus)] = setting.value.strip()
+                new_scene.append(str(setting))
+                continue
+            # Remap /ch/XX/gate sidechain source code (8th field, convention 1)
+            elif setting.path.startswith("/ch/") and setting.path.endswith("/gate"):
+                parts = setting.value.strip().split()
+                if len(parts) > 7:
+                    try:
+                        old_src_code = int(parts[7])
+                        new_src_code = self.source_mapper.remap_source_code_convention1(old_src_code)
+                        parts[7] = str(new_src_code)
+                        setting = ConfigLine(setting.path, " ".join(parts))
+                    except ValueError:
+                        pass  # leave unchanged if not an int
+            # Remap channel settings (other than mix)
             elif setting.match_context("/ch"):
-                # Remap channel settings
                 old_channel_num = int(setting.path_parts[1]) - 1
                 new_channel_number = self.channel_mapper.crossbar.old_to_new[old_channel_num]
-                
                 if new_channel_number is None:
-                    # Skip unmapped channels
                     if old_channel_num not in already_warned:
                         already_warned.add(old_channel_num)
                     continue
-                
                 setting = setting.with_replaced_path_part(1, str(new_channel_number + 1).zfill(2))
-                
-                # Remap any source codes within channel settings
                 setting = self._remap_setting_source_codes(setting)
-                
+            # Remap bus settings
             elif setting.match_context("/bus"):
-                # Remap bus settings
                 old_bus_num = int(setting.path_parts[1]) - 1
                 new_bus_number = self.channel_mapper.bus_crossbar.old_to_new[old_bus_num]
-                
                 if new_bus_number is None:
-                    # Skip unmapped buses
                     continue
-                
                 setting = setting.with_replaced_path_part(1, str(new_bus_number + 1).zfill(2))
-                
-                # Remap any source codes within bus settings
                 setting = self._remap_setting_source_codes(setting)
-                
             elif setting.match_context("/auxin"):
-                # Remap aux input source codes
                 setting = self._remap_setting_source_codes(setting)
-                
             elif setting.match_context("/mtx"):
-                # Remap matrix source codes (assuming they use Convention 1)
                 setting = self._remap_setting_source_codes(setting)
-                
             elif setting.path.startswith("/outputs") and len(setting.path_parts) == 3:
-                # Remap output sources (uses Convention 2)
                 setting = self._remap_output_source(setting)
-            
-            elif setting.path.startswith("/p16") or setting.path.startswith("/dp48"):
-                # Remap DP48/P16 source codes (likely Convention 1, but need to verify)
+            elif setting.path.startswith("/p16"):
                 setting = self._remap_setting_source_codes(setting)
-            
-            # Remap any other source codes that might be missed
             elif self._setting_contains_source_code(setting):
                 setting = self._remap_setting_source_codes(setting)
-            
             new_scene.append(str(setting))
+        
+        # After remapping, check tap point and panFollow for each stereo bus pair
+        warnings = []
+        for ch in range(32):
+            for pair in range(8):
+                left_bus = pair * 2
+                right_bus = pair * 2 + 1
+                left_type = mix_type_settings.get((ch, left_bus))
+                right_type = mix_type_settings.get((ch, right_bus))
+                if left_type is not None and right_type is not None and left_type != right_type:
+                    warnings.append(f"Tap point mismatch for Ch {ch+1} Bus {left_bus+1}/{right_bus+1}: {left_type} vs {right_type}")
+                left_pan = pan_follow_settings.get((ch, left_bus))
+                right_pan = pan_follow_settings.get((ch, right_bus))
+                if left_pan is not None and right_pan is not None and left_pan != right_pan:
+                    warnings.append(f"panFollow mismatch for Ch {ch+1} Bus {left_bus+1}/{right_bus+1}: {left_pan} vs {right_pan}")
+        
+        if warnings:
+            new_scene.append("# WARNINGS:")
+            new_scene.extend([f"# {w}" for w in warnings])
         
         return "\n".join(new_scene) + "\n"
     

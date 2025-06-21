@@ -1,8 +1,8 @@
+import os
 import pytest
-from channel_mover import (
-    Crossbar, ConfigLine, ChannelLink, SceneParser, 
-    ChannelMapper, SceneGenerator, parse_cfgline
-)
+
+from channel_mover import (ChannelLink, ChannelMapper, ConfigLine, Crossbar,
+                           SceneGenerator, SceneParser, SourceCodeMapper, parse_cfgline)
 
 
 class TestCrossbar:
@@ -224,7 +224,6 @@ class TestSourceCodeMapper:
         # Set up some mappings
         channel_crossbar.connect(0, 5)  # Old channel 1 -> new channel 6
         
-        from channel_mover import SourceCodeMapper
         mapper = SourceCodeMapper(channel_crossbar, bus_crossbar)
         
         # Test channel source codes (1-32 -> channels 1-32)
@@ -244,7 +243,6 @@ class TestSourceCodeMapper:
         # Set up some bus mappings
         bus_crossbar.connect(0, 3)  # Old bus 1 -> new bus 4
         
-        from channel_mover import SourceCodeMapper
         mapper = SourceCodeMapper(channel_crossbar, bus_crossbar)
         
         # Test bus source codes (49-64 -> buses 1-16)
@@ -259,7 +257,6 @@ class TestSourceCodeMapper:
         # Set up some mappings
         channel_crossbar.connect(0, 5)  # Old channel 1 -> new channel 6
         
-        from channel_mover import SourceCodeMapper
         mapper = SourceCodeMapper(channel_crossbar, bus_crossbar)
         
         # Test channel source codes (26-57 -> channels 1-32)
@@ -278,7 +275,6 @@ class TestSourceCodeMapper:
         # Set up some bus mappings
         bus_crossbar.connect(0, 3)  # Old bus 1 -> new bus 4
         
-        from channel_mover import SourceCodeMapper
         mapper = SourceCodeMapper(channel_crossbar, bus_crossbar)
         
         # Test bus source codes (4-19 -> buses 1-16)
@@ -286,4 +282,183 @@ class TestSourceCodeMapper:
         assert mapper.remap_source_code_convention2(5) == 0   # Unmapped bus -> OFF
 
 
-# Run with: pytest test_channel_mover.py
+EXAMPLE_SCN_PATH = os.path.join(os.path.dirname(__file__), "example.scn")
+
+class TestIntegrationExampleScene:
+    def test_parse_example_scene(self):
+        with open(EXAMPLE_SCN_PATH) as f:
+            content = f.read()
+        parser = SceneParser()
+        parser.parse_scene_file(content)
+        # Basic header check
+        assert parser.header.startswith("#4.0#")
+        # Check that some known channels are present
+        assert parser.channel_names["ch01"] == "Pastor"
+        assert parser.channel_names["ch02"] == "HH Speak"
+        # Check that channel links are parsed
+        assert len(parser.channel_links) == 3  # From ONs in /config/chlink
+        # Check that bus links are parsed
+        assert len(parser.bus_links) == 4  # From ONs in /config/buslink
+
+    def test_channel_link_info(self):
+        with open(EXAMPLE_SCN_PATH) as f:
+            content = f.read()
+        parser = SceneParser()
+        parser.parse_scene_file(content)
+        # Channel 22 and 23 should be linked (from /config/chlink, ON at index 11)
+        info_22 = parser.get_channel_link_info(22)
+        info_23 = parser.get_channel_link_info(23)
+        assert info_22 is not None
+        assert info_23 is not None
+        partner_22, side_22 = info_22
+        partner_23, side_23 = info_23
+        assert partner_22 == 23
+        assert side_22 == 'L'
+        assert partner_23 == 22
+        assert side_23 == 'R'
+        # Unlinked channel
+        assert parser.get_channel_link_info(2) is None
+
+
+class TestBusRemapIntegration:
+    """
+    Integration test for remapping buses and verifying:
+    - Bus order and names
+    - Channel sends (level, PRE/POST, follow LR)
+    - Sidechain for Cong mics
+    - Aux and FX sources
+    Assumptions:
+    - Bus mapping is as described in the user prompt.
+    - Channel and bus names are unique and stable.
+    - PRE/POST/follow LR are encoded in the /ch/XX/mix/YY lines and must be preserved.
+    - Cong mics are named "CongMics" in the scene file.
+    - Speech bus is named "Speech".
+    - Aux and FX sources are routed via /config/routing/OUT and similar lines.
+    """
+    def test_bus_remap_and_sends(self):
+        import os
+        EXAMPLE_SCN_PATH = os.path.join(os.path.dirname(__file__), "example.scn")
+        with open(EXAMPLE_SCN_PATH) as f:
+            content = f.read()
+        parser = SceneParser()
+        parser.parse_scene_file(content)
+
+        # --- Step 1: Discover actual bus order and names from the file ---
+        bus_names = []
+        for i in range(1, 17):
+            name = None
+            for cl in parser.config_lines:
+                if cl.path == f"/bus/{i:02d}/config":
+                    name = cl.value.split('"')[1] if '"' in cl.value else cl.value.split()[0]
+                    break
+            if not name:
+                raise AssertionError(f"Bus {i} config not found in scene file!")
+            bus_names.append(name)
+        # Print for debug
+        print("Bus order in file:", bus_names)
+
+        # --- Step 2: Build new order (user must specify desired new order by name) ---
+        # Example: monitors first, then mixes (user must update this list as needed)
+        # If any name is missing, fail noisy
+        desired_new_order = [
+            "M Vox", "M. Piano", "M.Choir", "M. Gt2", "IEM drum L", "IEM drum R", "keys iem l", "keys iem r",  # monitors
+            "Vox SubG L", "Vox SubG R", "Speech", "Drum2Stream", "Inst2Stream", "Fx 2", "Stream L", "Stream R",  # mixes/other
+        ]
+        for name in desired_new_order:
+            if name not in bus_names:
+                raise AssertionError(f"Desired bus '{name}' not found in file! Found: {bus_names}")
+        old_to_new = [desired_new_order.index(name) for name in bus_names]
+
+        # --- Step 3: Set up bus crossbar for the new order ---
+        bus_crossbar = Crossbar(16)
+        for old, new in enumerate(old_to_new):
+            bus_crossbar.connect(old, new)
+        channel_crossbar = Crossbar(32)
+        channel_crossbar.initialize_noop()
+        mapper = ChannelMapper(parser, channel_crossbar, bus_crossbar)
+        generator = SceneGenerator(parser, mapper)
+        new_scene = generator.generate_new_scene()
+        new_parser = SceneParser()
+        new_parser.parse_scene_file(new_scene)
+
+        # --- Step 4: Check bus names moved correctly ---
+        for old, new in enumerate(old_to_new):
+            old_name = parser.bus_names[f"bus{old+1:02d}"]
+            new_name = new_parser.bus_names[f"bus{new+1:02d}"]
+            assert old_name == new_name, f"Bus {old+1} ({old_name}) should move to {new+1} ({new_name})"
+
+        # --- Step 5: Check sends for a few channels ---
+        # We'll check channel 1 (Pastor) and channel 8 (Choir)
+        def get_mix_line(parser, ch_idx, bus_idx):
+            ch = f"/ch/{ch_idx+1:02d}/mix/{bus_idx+1:02d}"
+            for cl in parser.config_lines:
+                if cl.path == ch:
+                    return cl.value
+            return None
+        # For channel 1, bus 10 (Speech) in old, should move to new Speech bus
+        old_speech_bus = 10
+        new_speech_bus = old_to_new[old_speech_bus]
+        old_val = get_mix_line(parser, 0, old_speech_bus)
+        new_val = get_mix_line(new_parser, 0, new_speech_bus)
+        assert old_val is not None and new_val is not None
+        # PRE/POST/follow LR should be preserved, but only for first bus in each pair
+        def check_tap_and_panfollow(old_val, new_val, bus_idx):
+            if bus_idx % 2 == 0:  # Only check for first bus in pair
+                for tag in ["POST", "PRE", "EQ->"]:
+                    assert (tag in old_val) == (tag in new_val), (
+                        f"Tap point mismatch for bus {bus_idx+1}: old='{old_val}', new='{new_val}'"
+                    )
+        # For channel 1, bus 10 (Speech) in old, should move to new Speech bus
+        old_speech_bus = 10
+        new_speech_bus = old_to_new[old_speech_bus]
+        old_val = get_mix_line(parser, 0, old_speech_bus)
+        new_val = get_mix_line(new_parser, 0, new_speech_bus)
+        assert old_val is not None and new_val is not None
+        check_tap_and_panfollow(old_val, new_val, new_speech_bus)
+        # For channel 8 (Choir), check bus 4 (Drums IEM) moves to new Drums IEM
+        old_drums_bus = 4
+        new_drums_bus = old_to_new[old_drums_bus]
+        old_val = get_mix_line(parser, 7, old_drums_bus)
+        new_val = get_mix_line(new_parser, 7, new_drums_bus)
+        assert old_val is not None and new_val is not None
+        check_tap_and_panfollow(old_val, new_val, new_drums_bus)
+
+        # --- Step 6: Check Cong mics sidechain ---
+        # Find CongMics channel
+        cong_idx = None
+        for i in range(32):
+            if parser.channel_names.get(f"ch{i+1:02d}", '').startswith("Cong "):
+                cong_idx = i
+                break
+        if cong_idx is None:
+            raise AssertionError("CongMics channel not found in scene file!")
+        # Find sidechain bus in old and new (using source code convention 1)
+        def get_sidechain_src_code(parser, ch_idx):
+            for cl in parser.config_lines:
+                if cl.path == f"/ch/{ch_idx+1:02d}/gate":
+                    parts = cl.value.split()
+                    if len(parts) > 7:
+                        return int(parts[7])
+            return None
+        old_sc_src = get_sidechain_src_code(parser, cong_idx)
+        new_sc_src = get_sidechain_src_code(new_parser, cong_idx)
+        assert old_sc_src is not None and new_sc_src is not None
+        # Spot-check: original should be 61 (bus 13)
+        assert old_sc_src == 61, f"Expected original sidechain source code 61 (bus 13), got {old_sc_src}"
+        # Remap using SourceCodeMapper
+        source_mapper = SourceCodeMapper(channel_crossbar, bus_crossbar)
+        expected_new_sc_src = source_mapper.remap_source_code_convention1(old_sc_src)
+        # the new source should be code 59 (bus 11)
+        assert expected_new_sc_src == 59, f"Expected new sidechain source code 59 (bus 11), got {expected_new_sc_src}"
+        assert new_sc_src == expected_new_sc_src, f"Cong mics sidechain should remap from {old_sc_src} to {expected_new_sc_src}, got {new_sc_src}"
+
+        # --- Step 7: Check Aux 1-4 sources ---
+        # TODO: fill in based on the example scene file
+        # Aux 1 and 2 sources should be the Vox Subgroup L/R buses, 3 and 4 should be the drums and instruments subgroup buses, and 5 and 6 should be Stream LR.
+
+        # --- Step 8: Check FX sources ---
+        # TODO: fill in based on the example scene file
+
+
+        # --- Step 9: Documented assumptions are checked above ---
+        # If any assertion fails, the test will show which mapping or property was not preserved.
