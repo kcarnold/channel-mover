@@ -333,6 +333,15 @@ class SceneGenerator:
     
     def _remap_output_source(self, setting: ConfigLine) -> ConfigLine:
         """Remap output source codes for main outputs."""
+        # Source codes
+        # 0-3: off, mainL/R, mono
+        # 4-19: mixbuses 1-16
+        # 20-25: Matrix 1-6
+        # 26-57: Channels 1-32
+        # 58-63: Aux 1-6
+        # 64-73: FX1L-FX4R
+        # 74-76: monL, monR, talkback
+
         src_code_raw = setting.value.split(" ")[0]
         src_code = int(src_code_raw)
         
