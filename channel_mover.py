@@ -12,6 +12,7 @@ class Crossbar:
     Example:
     
     >>> cb = Crossbar(n=4)
+    >>> cb.clear_all_mappings()
     >>> cb.connect(0, 1)
     >>> cb.connect(2, 3)
     >>> cb.get_unmapped_olds()
@@ -36,6 +37,7 @@ class Crossbar:
     def __init__(self, n: int) -> None:
         self.old_to_new: List[Optional[int]] = [None] * n
         self.new_to_old: List[Optional[int]] = [None] * n
+        self.initialize_noop()
 
     def connect(self, old: int, new: int) -> None:
         self.old_to_new[old] = new
@@ -44,6 +46,18 @@ class Crossbar:
     def disconnect(self, old: int, new: int) -> None:
         self.old_to_new[old] = None
         self.new_to_old[new] = None
+    
+    def initialize_noop(self) -> None:
+        """Initialize with a no-op mapping where each channel maps to itself."""
+        for i in range(len(self.old_to_new)):
+            self.old_to_new[i] = i
+            self.new_to_old[i] = i
+    
+    def clear_all_mappings(self) -> None:
+        """Clear all current mappings."""
+        for i in range(len(self.old_to_new)):
+            self.old_to_new[i] = None
+            self.new_to_old[i] = None
 
     def get_mappings(self) -> List[Tuple[int, int]]:
         return [(i, v) for i, v in enumerate(self.old_to_new) if v is not None]
@@ -355,10 +369,18 @@ def main():
     scene_parser.parse_scene_file(file_content)
     
     # Initialize or reset channel crossbar
-    if st.session_state.get('channel_crossbar') is None or st.button("Reset channels"):
+    if st.session_state.get('channel_crossbar') is None:
         st.session_state.channel_crossbar = Crossbar(n=32)
     channel_crossbar = st.session_state.channel_crossbar
     
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Set One-to-One Mappings"):
+            channel_crossbar.initialize_noop()
+    with col2:
+        if st.button("Clear All Mappings"):
+            channel_crossbar.clear_all_mappings()
+
     # Load crossbar from JSON
     load_crossbar = st.text_input("Paste crossbar JSON here")
     if load_crossbar:
@@ -410,7 +432,10 @@ def main():
 def _render_channel_mapping_ui(scene_parser: SceneParser, channel_crossbar: Crossbar):
     """Render the UI for mapping channels."""
     def handle_change(key: str, prev_old: Optional[int], prev_new: int) -> None:
-        cur_old_channel = st.session_state[key]
+        cur_old_channel = st.session_state.get(key, None)
+        if cur_old_channel is None:
+            print(f"Warning: {key} is None, skipping change")
+            return
         if prev_old is not None:
             channel_crossbar.disconnect(old=prev_old, new=prev_new)
         if cur_old_channel is not None:
@@ -419,6 +444,7 @@ def _render_channel_mapping_ui(scene_parser: SceneParser, channel_crossbar: Cros
     for i in range(32):
         num = str(i+1).zfill(2)
         key = f"ch{num}"
+        st.session_state.pop(key, None)  # Reset state for this key
 
         available_channels = channel_crossbar.get_unmapped_olds()
         already_mapped_old_channel_num = channel_crossbar.new_to_old[i]
