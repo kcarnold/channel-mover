@@ -549,6 +549,36 @@ class SceneGenerator:
                     pan_follow_settings[(new_ch, new_bus)] = setting.value.strip()
                 new_scene.append(str(setting))
                 continue
+            # Remap auxin sends to buses: /auxin/XX/mix/YY/...
+            elif setting.path.startswith("/auxin/") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
+                old_aux = int(setting.path_parts[1]) - 1
+                old_bus = int(setting.path_parts[3]) - 1
+                new_aux = old_aux  # auxin channels are not remapped
+                new_bus = self.channel_mapper.bus_crossbar.old_to_new[old_bus]
+                if new_bus is None:
+                    continue  # skip unmapped
+                # Remap bus in path
+                new_path_parts = setting.path_parts.copy()
+                new_path_parts[3] = str(new_bus + 1).zfill(2)
+                new_path = "/" + "/".join(["auxin"] + new_path_parts[1:])
+                setting = ConfigLine(new_path, setting.value)
+                new_scene.append(str(setting))
+                continue
+            # Remap fxrtn sends to buses: /fxrtn/XX/mix/YY/...
+            elif setting.path.startswith("/fxrtn/") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
+                old_fx = int(setting.path_parts[1]) - 1
+                old_bus = int(setting.path_parts[3]) - 1
+                new_fx = old_fx  # fxrtn channels are not remapped
+                new_bus = self.channel_mapper.bus_crossbar.old_to_new[old_bus]
+                if new_bus is None:
+                    continue  # skip unmapped
+                # Remap bus in path
+                new_path_parts = setting.path_parts.copy()
+                new_path_parts[3] = str(new_bus + 1).zfill(2)
+                new_path = "/" + "/".join(["fxrtn"] + new_path_parts[1:])
+                setting = ConfigLine(new_path, setting.value)
+                new_scene.append(str(setting))
+                continue
             # Remap /ch/XX/gate sidechain source code (8th field, convention 1)
             elif setting.path.startswith("/ch/") and setting.path.endswith("/gate"):
                 parts = setting.value.strip().split()

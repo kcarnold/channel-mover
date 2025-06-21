@@ -423,6 +423,9 @@ class TestBusRemapIntegration:
         assert old_val is not None and new_val is not None
         check_tap_and_panfollow(old_val, new_val, new_drums_bus)
 
+        # TODO: Also check an /auxin and an /fxrtn send to buses.
+        # TODO: make sur the actual signal levels are preserved, not just the tap points.
+
         # --- Step 6: Check Cong mics sidechain ---
         # Find CongMics channel
         cong_idx = None
@@ -453,12 +456,63 @@ class TestBusRemapIntegration:
         assert new_sc_src == expected_new_sc_src, f"Cong mics sidechain should remap from {old_sc_src} to {expected_new_sc_src}, got {new_sc_src}"
 
         # --- Step 7: Check Aux 1-4 sources ---
-        # TODO: fill in based on the example scene file
-        # Aux 1 and 2 sources should be the Vox Subgroup L/R buses, 3 and 4 should be the drums and instruments subgroup buses, and 5 and 6 should be Stream LR.
+        # For each auxin 1-4, check that the source code is remapped correctly
+        def get_auxin_source(parser, aux_idx):
+            for cl in parser.config_lines:
+                if cl.path == f"/auxin/{aux_idx+1:02d}/config/source":
+                    return int(cl.value)
+            return None
+        for aux_idx in range(4):
+            old_src = get_auxin_source(parser, aux_idx)
+            new_src = get_auxin_source(new_parser, aux_idx)
+            if old_src is not None and new_src is not None:
+                expected_new_src = source_mapper.remap_source_code_convention1(old_src)
+                assert new_src == expected_new_src, f"AuxIn {aux_idx+1} source should remap from {old_src} to {expected_new_src}, got {new_src}"
 
         # --- Step 8: Check FX sources ---
-        # TODO: fill in based on the example scene file
+        # For each FX 1-4, check that the L/R source codes are remapped correctly
+        def get_fx_source(parser, fx_idx, side):
+            for cl in parser.config_lines:
+                if cl.path == f"/fx/{fx_idx+1}/source/{side}":
+                    return int(cl.value)
+            return None
+        for fx_idx in range(4):
+            for side in ["l", "r"]:
+                old_src = get_fx_source(parser, fx_idx, side)
+                new_src = get_fx_source(new_parser, fx_idx, side)
+                if old_src is not None and new_src is not None:
+                    # FX source codes: 1-16 correspond to buses 1-16, so remap if in that range
+                    if 1 <= old_src <= 16:
+                        expected_new_src = old_to_new[old_src-1] + 1
+                        assert new_src == expected_new_src, f"FX {fx_idx+1} {side.upper()} source should remap from {old_src} to {expected_new_src}, got {new_src}"
+                    else:
+                        assert new_src == old_src, f"FX {fx_idx+1} {side.upper()} source should remain {old_src}, got {new_src}"
 
-
-        # --- Step 9: Documented assumptions are checked above ---
-        # If any assertion fails, the test will show which mapping or property was not preserved.
+        # --- Step 9: Check an /auxin and an /fxrtn send to buses ---
+        # Check that the signal level and tap point are preserved for auxin 1 and fxrtn 1 sends to a bus
+        def get_auxin_mix_line(parser, aux_idx, bus_idx):
+            path = f"/auxin/{aux_idx+1:02d}/mix/{bus_idx+1:02d}"
+            for cl in parser.config_lines:
+                if cl.path == path:
+                    return cl.value
+            return None
+        def get_fxrtn_mix_line(parser, fx_idx, bus_idx):
+            path = f"/fxrtn/{fx_idx+1:02d}/mix/{bus_idx+1:02d}"
+            for cl in parser.config_lines:
+                if cl.path == path:
+                    return cl.value
+            return None
+        # Pick auxin 1 and fxrtn 1, and a bus that exists in both old and new
+        test_bus = 0  # bus 1
+        old_bus = test_bus
+        new_bus = old_to_new[old_bus]
+        # Auxin
+        old_val = get_auxin_mix_line(parser, 0, old_bus)
+        new_val = get_auxin_mix_line(new_parser, 0, new_bus)
+        if old_val is not None and new_val is not None:
+            assert old_val == new_val, f"AuxIn 1 send to bus {old_bus+1} should be preserved at bus {new_bus+1}: old='{old_val}', new='{new_val}'"
+        # FX Return
+        old_val = get_fxrtn_mix_line(parser, 0, old_bus)
+        new_val = get_fxrtn_mix_line(new_parser, 0, new_bus)
+        if old_val is not None and new_val is not None:
+            assert old_val == new_val, f"FXRtn 1 send to bus {old_bus+1} should be preserved at bus {new_bus+1}: old='{old_val}', new='{new_val}'"
