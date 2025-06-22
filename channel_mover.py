@@ -716,17 +716,18 @@ def main():
     bus_crossbar = st.session_state.bus_crossbar
 
     # Load crossbar from JSON
-    load_crossbar = st.text_input("Paste crossbar JSON here")
-    if load_crossbar:
-        st.session_state.channel_crossbar = channel_crossbar = Crossbar(n=32)
-        st.session_state.bus_crossbar = bus_crossbar = Crossbar(n=16)
-        data = json.loads(load_crossbar)
-        if "channels" in data:
-            for old, new in data["channels"]:
-                channel_crossbar.connect(old, new)
-        if "buses" in data:
-            for old, new in data["buses"]:
-                bus_crossbar.connect(old, new)
+    with st.expander("Load Crossbar JSON", expanded=False):
+        crossbar_json = st.text_input("Paste crossbar JSON here")
+        if st.button("Load Crossbar"):
+            data = json.loads(crossbar_json)
+            if "channels" in data:
+                st.session_state.channel_crossbar = channel_crossbar = Crossbar(n=32)
+                for old, new in data["channels"]:
+                    channel_crossbar.connect(old, new)
+            if "buses" in data:
+                st.session_state.bus_crossbar = bus_crossbar = Crossbar(n=16)
+                for old, new in data["buses"]:
+                    bus_crossbar.connect(old, new)
     
     # Create channel mapper
     channel_mapper = ChannelMapper(scene_parser, channel_crossbar, bus_crossbar)
