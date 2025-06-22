@@ -78,10 +78,20 @@ class Crossbar:
 
 class ConfigLine(namedtuple("ConfigLine", 'path value')):
     def match_context(self, path: str) -> bool:
-        return self.path.startswith(path)
+        # Warn if trailing slash would change the result
+        base = self.path
+        if (base.startswith(path) != base.startswith(path.rstrip("/"))):
+            import warnings
+            warnings.warn(f"match_context: ambiguous match for '{path}' vs '{path.rstrip('/')}' on '{base}'")
+        return base.startswith(path)
     
     def match_setting(self, path: str) -> bool:
-        return self.path.endswith(path)
+        # Warn if leading slash would change the result
+        base = self.path
+        if (base.endswith(path) != base.endswith(path.lstrip("/"))):
+            import warnings
+            warnings.warn(f"match_setting: ambiguous match for '{path}' vs '{path.lstrip('/')}'' on '{base}'")
+        return base.endswith(path)
     
     @property
     def path_parts(self) -> List[str]:
