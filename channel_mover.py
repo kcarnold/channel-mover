@@ -517,25 +517,25 @@ class SceneGenerator:
         
         for setting in self.scene_parser.config_lines:
             # Remap channel links
-            if setting.path.startswith("/config/chlink"):
+            if setting.match_context("/config/chlink"):
                 setting = ConfigLine(
                     path=setting.path,
                     value=" ".join(["ON" if x else "OFF" for x in link_states])
                 )
             # Remap bus links
-            elif setting.path.startswith("/config/buslink"):
+            elif setting.match_context("/config/buslink"):
                 setting = ConfigLine(
                     path=setting.path,
                     value=" ".join(["ON" if x else "OFF" for x in bus_link_states])
                 )
             # Remap channel sends to buses: /ch/XX/mix/YY/...
-            elif setting.path.startswith("/ch/") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
+            elif setting.match_context("/ch") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
                 old_ch = int(setting.path_parts[1]) - 1
                 old_bus = int(setting.path_parts[3]) - 1
                 new_ch = self.channel_mapper.crossbar.old_to_new[old_ch]
                 new_bus = self.channel_mapper.bus_crossbar.old_to_new[old_bus]
                 if new_ch is None or new_bus is None:
-                    continue  # skip unmapped
+                    raise ValueError(f"Unmapped channel {old_ch+1} or bus {old_bus+1} for mix setting {setting.path}")
                 # Remap both channel and bus in path
                 new_path_parts = setting.path_parts.copy()
                 new_path_parts[1] = str(new_ch + 1).zfill(2)
@@ -550,13 +550,13 @@ class SceneGenerator:
                 new_scene.append(str(setting))
                 continue
             # Remap auxin sends to buses: /auxin/XX/mix/YY/...
-            elif setting.path.startswith("/auxin/") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
+            elif setting.match_context("/auxin") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
                 old_aux = int(setting.path_parts[1]) - 1
                 old_bus = int(setting.path_parts[3]) - 1
                 new_aux = old_aux  # auxin channels are not remapped
                 new_bus = self.channel_mapper.bus_crossbar.old_to_new[old_bus]
                 if new_bus is None:
-                    continue  # skip unmapped
+                    raise ValueError(f"Unmapped bus {old_bus+1} for auxin mix setting {setting.path}")
                 # Remap bus in path
                 new_path_parts = setting.path_parts.copy()
                 new_path_parts[3] = str(new_bus + 1).zfill(2)
@@ -565,13 +565,13 @@ class SceneGenerator:
                 new_scene.append(str(setting))
                 continue
             # Remap fxrtn sends to buses: /fxrtn/XX/mix/YY/...
-            elif setting.path.startswith("/fxrtn/") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
+            elif setting.match_context("/fxrtn") and len(setting.path_parts) >= 4 and setting.path_parts[2] == "mix":
                 old_fx = int(setting.path_parts[1]) - 1
                 old_bus = int(setting.path_parts[3]) - 1
                 new_fx = old_fx  # fxrtn channels are not remapped
                 new_bus = self.channel_mapper.bus_crossbar.old_to_new[old_bus]
                 if new_bus is None:
-                    continue  # skip unmapped
+                    raise ValueError(f"Unmapped bus {old_bus+1} for fxrtn mix setting {setting.path}")
                 # Remap bus in path
                 new_path_parts = setting.path_parts.copy()
                 new_path_parts[3] = str(new_bus + 1).zfill(2)
@@ -579,27 +579,25 @@ class SceneGenerator:
                 setting = ConfigLine(new_path, setting.value)
                 new_scene.append(str(setting))
                 continue
-            # Remap /ch/XX/gate sidechain source code (8th field, convention 1)
-            elif setting.path.startswith("/ch/") and setting.path.endswith("/gate"):
-                parts = setting.value.strip().split()
-                if len(parts) > 7:
-                    try:
-                        old_src_code = int(parts[7])
-                        new_src_code = self.source_mapper.remap_source_code_convention1(old_src_code)
-                        parts[7] = str(new_src_code)
-                        setting = ConfigLine(setting.path, " ".join(parts))
-                    except ValueError:
-                        pass  # leave unchanged if not an int
             # Remap channel settings (other than mix)
             elif setting.match_context("/ch"):
                 old_channel_num = int(setting.path_parts[1]) - 1
                 new_channel_number = self.channel_mapper.crossbar.old_to_new[old_channel_num]
                 if new_channel_number is None:
-                    if old_channel_num not in already_warned:
-                        already_warned.add(old_channel_num)
-                    continue
+                    raise ValueError(f"Unmapped channel {old_channel_num+1} for setting {setting.path}")
+                # Remap channel index
                 setting = setting.with_replaced_path_part(1, str(new_channel_number + 1).zfill(2))
-                setting = self._remap_setting_source_codes(setting)
+                # Remap gate-specific sidechain source code (8th field, convention 1)
+                if setting.path.endswith("/gate"):
+                    parts = setting.value.strip().split()
+                    assert len(parts) > 7, f"Unexpected gate format for path {setting.path}: {setting.value}"
+                    old_src_code = int(parts[7])
+                    new_src_code = self.source_mapper.remap_source_code_convention1(old_src_code)
+                    parts[7] = str(new_src_code)
+                    setting = ConfigLine(setting.path, " ".join(parts))
+                else:
+                    # Remap other convention 1 source codes
+                    setting = self._remap_setting_source_codes(setting)
             # Remap bus settings
             elif setting.match_context("/bus"):
                 old_bus_num = int(setting.path_parts[1]) - 1
