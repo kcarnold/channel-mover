@@ -799,12 +799,14 @@ def main():
     
     st.info("Remember to turn off param and channel safes before loading the new scene!")
     
-    # Debug information
-    st.header("Debug")
-    st.subheader("Channel Mappings")
-    st.code(json.dumps(channel_crossbar.get_mappings()))
-    st.subheader("Bus Mappings")
-    st.code(json.dumps(bus_crossbar.get_mappings()))
+    st.header("Crossbar JSON Export")
+
+    crossbar_json = json.dumps({
+        "channels": channel_crossbar.get_mappings(),
+        "buses": bus_crossbar.get_mappings(),
+    })
+    st.code(crossbar_json, language="json")
+    st.info("Copy the above JSON to use as a crossbar preset.")
 
 
 def _render_channel_mapping_ui(scene_parser: SceneParser, channel_crossbar: Crossbar):
