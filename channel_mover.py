@@ -768,24 +768,7 @@ def main():
     if all_warnings:
         for warning in all_warnings:
             st.warning(warning)
-    
-    # Show link states
-    link_states = channel_mapper.get_link_states_for_export(new_links)
-    original_link_states = _get_original_link_states(scene_parser.channel_links)
-    
-    bus_link_states = channel_mapper.get_bus_link_states_for_export(new_bus_links)
-    original_bus_link_states = _get_original_bus_link_states(scene_parser.bus_links)
-    
-    if link_states != original_link_states:
-        st.write("New channel links:", ["ON" if x else "OFF" for x in link_states])
-    else:
-        st.write("Channel links unchanged")
-    
-    if bus_link_states != original_bus_link_states:
-        st.write("New bus links:", ["ON" if x else "OFF" for x in bus_link_states])
-    else:
-        st.write("Bus links unchanged")
-    
+            
     # Generate and offer download of new scene
     scene_generator = SceneGenerator(scene_parser, channel_mapper)
     new_scene_content = scene_generator.generate_new_scene()
